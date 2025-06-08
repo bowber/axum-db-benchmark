@@ -66,3 +66,15 @@ end
 --   17616 requests in 10.02s, 1.26MB read
 -- Requests/sec:   1758.16
 -- Transfer/sec:    128.77KB
+
+----------------------Back to my PC-----------------------------------
+-- Using local_thread!
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s update.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     6.52ms    7.13ms  80.34ms   85.20%
+--     Req/Sec     4.93k   693.51     6.05k    70.50%
+--   196451 requests in 10.01s, 19.59MB read
+-- Requests/sec:  19632.18
+-- Transfer/sec:      1.96MB

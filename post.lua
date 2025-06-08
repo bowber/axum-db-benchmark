@@ -87,3 +87,27 @@ end
 --   16938 requests in 10.02s, 2.89MB read
 -- Requests/sec:   1690.81
 -- Transfer/sec:    295.84KB
+
+----------------------Back to my PC-----------------------------------
+-- Using local_thread! NOTE: THIS ONLY 4k records put into database
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s post.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     6.11ms    5.91ms  47.17ms   73.51%
+--     Req/Sec     5.04k   491.68     6.08k    63.25%
+--   200934 requests in 10.01s, 31.96MB read
+-- Requests/sec:  20076.37
+-- Transfer/sec:      3.19MB
+
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s post.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     6.34ms    6.40ms  53.48ms   79.20%
+--     Req/Sec     4.97k   611.94     5.90k    67.00%
+--   197803 requests in 10.01s, 31.08MB read
+-- Requests/sec:  19768.99
+-- Transfer/sec:      3.11MB
+
+------------------------------ +50% throughput after using result instead of panic------------------

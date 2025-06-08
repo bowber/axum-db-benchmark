@@ -7,13 +7,16 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use serde::{Deserialize, Serialize};
-use sqlite::OpenFlags;
+use sqlite::Connection;
 use tokio::sync::Mutex;
 use tower_http::{
     LatencyUnit,
-    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
+    trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
+
+mod err;
+use err::ServerError;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,7 +24,7 @@ pub struct AppState {
 }
 
 thread_local! {
-    static CONNECTION: Rc<String> = Rc::new("Hello".to_string());
+    static CONNECTION: Rc<Connection> = Rc::new(Connection::open("my_database.db").unwrap());
 }
 
 #[tokio::main]
@@ -49,6 +52,11 @@ async fn main() {
                 .on_response(
                     DefaultOnResponse::new()
                         .level(Level::INFO)
+                        .latency_unit(LatencyUnit::Micros),
+                )
+                .on_failure(
+                    DefaultOnFailure::new()
+                        .level(Level::ERROR)
                         .latency_unit(LatencyUnit::Micros),
                 ),
         );
@@ -95,7 +103,10 @@ impl AppState {
     }
 }
 
-pub async fn create_user(State(state): State<AppState>, Json(payload): Json<CreateUser>) -> String {
+pub async fn create_user(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateUser>,
+) -> Result<String, ServerError> {
     // create a new user in the database
     let conn = state.connection.lock().await;
     let mut statement = conn
@@ -105,10 +116,10 @@ pub async fn create_user(State(state): State<AppState>, Json(payload): Json<Crea
     let result = statement.next();
     if result.is_err() {
         // if there was an error, return a 500 Internal Server Error
-        return format!("Error creating user: {}", result.err().unwrap());
+        return Err(format!("Error creating user: {:?}", result.err()).into());
     }
     // return a 201 Created status with the user data
-    return format!("User created with username: {}", payload.username);
+    return Ok(format!("User created with username: {}", payload.username));
 }
 
 pub async fn get_user_by_username(
@@ -213,7 +224,10 @@ mod tests {
         };
         let state = AppState::init().await;
         let status = create_user(State(state), Json(payload)).await;
-        assert_eq!(status, "User created with username: testuser");
+        assert_eq!(
+            status,
+            Ok("User created with username: testuser".to_string())
+        );
     }
     #[tokio::test]
     async fn test_get_user_by_username() {

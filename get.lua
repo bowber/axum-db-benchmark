@@ -61,3 +61,25 @@
 --   16177 requests in 10.03s, 2.27MB read
 -- Requests/sec:   1613.34
 -- Transfer/sec:    231.60KB
+
+----------------------Back to my PC-----------------------------------
+-- Using local_thread!
+-- ─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     6.14ms    5.91ms  26.30ms   74.22%
+--     Req/Sec     5.01k   464.02     5.90k    63.75%
+--   199639 requests in 10.01s, 27.99MB read
+-- Requests/sec:  19950.87
+-- Transfer/sec:      2.80MB
+
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello0
+-- Running 10s test @ http://localhost:3000/users/hello0
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     6.28ms    6.10ms  38.86ms   74.87%
+--     Req/Sec     4.92k   512.28     5.92k    62.00%
+--   195934 requests in 10.00s, 30.46MB read
+-- Requests/sec:  19584.82
+-- Transfer/sec:      3.04MB

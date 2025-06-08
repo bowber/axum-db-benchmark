@@ -94,3 +94,15 @@ end
 --   16394 requests in 10.01s, 1.17MB read
 -- Requests/sec:   1637.06
 -- Transfer/sec:    119.90KB
+
+----------------------Back to my PC-----------------------------------
+-- Using local_thread!
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s delete.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     6.26ms    6.14ms  37.01ms   76.55%
+--     Req/Sec     4.97k   528.87     5.92k    58.00%
+--   198042 requests in 10.00s, 29.24MB read
+-- Requests/sec:  19796.02
+-- Transfer/sec:      2.92MB
