@@ -26,4 +26,5 @@
 - rusqlite is better for single-connection use cases (but not much compared to r2d2_sqlite).
 - use sqlite crate with manual mutex locking sometimes results in lock error.
 - 2 connections dramatically decreases performance for INSERT, UPDATE, DELETE operations -> so don't use it if you just want a balanced point.
+- every UPDATE operation only update 1 row, bulk updates are not used in this benchmark.
 
