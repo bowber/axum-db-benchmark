@@ -9,10 +9,10 @@ use axum::{
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::thread;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::{
     LatencyUnit,
     trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -23,7 +23,7 @@ use err::ServerError;
 
 #[derive(Clone)]
 pub struct AppState {
-    connection: Pool<SqliteConnectionManager>,
+    connection: Arc<Mutex<Connection>>,
 }
 
 #[tokio::main]
@@ -73,31 +73,34 @@ impl AppState {
     pub async fn init() -> Self {
         // Initialize the SQLite database connection
         #[cfg(not(test))]
-        let manager = SqliteConnectionManager::file("my_database.db");
+        let pool = Arc::new(Mutex::new(
+            Connection::open("my_database.db").expect("Failed to open database"),
+        ));
         // Use a different database for testing
         #[cfg(test)]
-        let manager = SqliteConnectionManager::memory();
-        let pool = r2d2::Pool::builder().max_size(1).build(manager).unwrap();
-        let conn = pool.get().unwrap();
-        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
-        conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
-        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        // Create the users table if it doesn't exist
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS users (
+        let pool = Arc::new(Mutex::new(rusqlite::Connection::open_in_memory().unwrap()));
+        {
+            let conn = pool.lock().await;
+            conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+            conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
+            conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+            // Create the users table if it doesn't exist
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
                 age INTEGER DEFAULT 0
             );",
-            params![],
-        )
-        .unwrap();
-        // Create index on username for faster lookups
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_username ON users (username);",
-            params![],
-        )
-        .unwrap();
+                params![],
+            )
+            .unwrap();
+            // Create index on username for faster lookups
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_username ON users (username);",
+                params![],
+            )
+            .unwrap();
+        }
         AppState { connection: pool }
     }
 }
@@ -107,7 +110,7 @@ async fn create_user(
     Json(payload): Json<CreateUser>,
 ) -> Result<String, ServerError> {
     // create a new user in the database
-    let conn = state.connection.get()?;
+    let conn = state.connection.lock().await;
     let result = conn.execute(
         "INSERT INTO users (username) VALUES (?);",
         params![payload.username],
@@ -127,7 +130,7 @@ pub async fn get_user_by_username(
     Path(username): Path<String>,
 ) -> Result<Json<User>, ServerError> {
     // fetch a user by username from the database
-    let conn = state.connection.get()?;
+    let conn = state.connection.lock().await;
     let result = conn.query_one(
         "SELECT id, username, age FROM users WHERE username = ?;",
         params![username],
@@ -151,7 +154,7 @@ async fn update_user_by_username(
     Json(payload): Json<UpdateUser>,
 ) -> Result<StatusCode, ServerError> {
     // update a user by username in the database
-    let conn = state.connection.get()?;
+    let conn = state.connection.lock().await;
     let statement = conn.execute(
         "UPDATE users SET age = ? WHERE username = ?;",
         params![payload.age, username],
@@ -169,7 +172,7 @@ pub async fn delete_user_by_username(
     Path(username): Path<String>,
 ) -> Result<StatusCode, ServerError> {
     // delete a user by username from the database
-    let conn = state.connection.get()?;
+    let conn = state.connection.lock().await;
     let statement = conn.execute("DELETE FROM users WHERE username = ?;", params![username]);
 
     match statement {

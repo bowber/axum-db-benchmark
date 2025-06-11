@@ -156,3 +156,13 @@ end
 --   224466 requests in 10.03s, 33.07MB read
 -- Requests/sec:  22379.48
 -- Transfer/sec:      3.30MB
+-------------------------------Using rusqlite connection directly with Arc<Mutex>------------------------
+-- ╰─ ❯❯ wrk -t1 -c400 -d10s -s post.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   1 threads and 400 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency    17.23ms    1.74ms  28.69ms   72.62%
+--     Req/Sec    23.31k     1.42k   25.23k    80.00%
+--   231958 requests in 10.04s, 34.18MB read
+-- Requests/sec:  23113.09
+-- Transfer/sec:      3.41MB

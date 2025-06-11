@@ -134,3 +134,22 @@
 --   1221464 requests in 10.10s, 172.40MB read
 -- Requests/sec: 120943.08
 -- Transfer/sec:     17.07MB
+-------------------------------Using rusqlite connection directly with Arc<Mutex>------------------------
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     0.99ms  119.05us   4.97ms   93.10%
+--     Req/Sec    25.41k     0.89k   26.76k    74.00%
+--   1011426 requests in 10.00s, 142.76MB read
+-- Requests/sec: 101137.76
+-- Transfer/sec:     14.27MB
+
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     1.06ms  154.26us   4.82ms   88.93%
+--     Req/Sec    23.70k     1.29k   26.58k    69.00%
+--   943634 requests in 10.00s, 133.19MB read
+-- Requests/sec:  94359.90
+-- Transfer/sec:     13.32MB

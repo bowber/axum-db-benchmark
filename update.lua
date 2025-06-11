@@ -1,5 +1,6 @@
 local age = 0
 request = function()
+    age = math.random(10000, 20000) -- Random age between 10,000 and 20,000
     local body = string.format('{"age": %d}', age)
 
     local headers = {
@@ -123,3 +124,32 @@ end
 --   1194174 requests in 10.10s, 85.41MB read
 -- Requests/sec: 118238.18
 -- Transfer/sec:      8.46MB
+-------------------------------Using rusqlite connection directly with Arc<Mutex>------------------------
+----------- With the same age ------------------
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     1.01ms  122.41us   4.58ms   84.43%
+--     Req/Sec    24.95k     1.78k   46.67k    92.29%
+--   997774 requests in 10.10s, 71.37MB read
+-- Requests/sec:  98795.97
+-- Transfer/sec:      7.07MB
+------------ With incremental age ------------------
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s update.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     2.02ms  824.03us  12.39ms   89.84%
+--     Req/Sec    12.64k   646.46    13.76k    69.75%
+--   502811 requests in 10.00s, 35.96MB read
+-- Requests/sec:  50273.96
+-- Transfer/sec:      3.60MB
+-------------- With random age ------------------ (some results in `database is locked` Err)
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     2.06ms    0.86ms  14.26ms   88.60%
+--     Req/Sec    12.38k     1.88k   47.00k    98.00%
+--   493877 requests in 10.10s, 35.32MB read
+-- Requests/sec:  48899.24
+-- Transfer/sec:      3.50MB

@@ -113,3 +113,6 @@ end
 ----------------------Using only single connection-----------------------------
 -- Result increasing with each run (the less successful deletion requests, the more throughput)
 -- from 51k to 137k
+-------------------------------Using rusqlite connection directly with Arc<Mutex>------------------------
+-- Result increasing with each run (the less successful deletion requests, the more throughput)
+-- 52K to 108k
