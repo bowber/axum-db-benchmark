@@ -1,6 +1,7 @@
 local age = 0
 request = function()
-    age = math.random(10000, 20000) -- Random age between 10,000 and 20,000
+    -- age = math.random(10000, 20000) -- Random age between 10,000 and 20,000
+    age = age + 1 -- Incremental age for each request
     local body = string.format('{"age": %d}', age)
 
     local headers = {
@@ -124,6 +125,39 @@ end
 --   1194174 requests in 10.10s, 85.41MB read
 -- Requests/sec: 118238.18
 -- Transfer/sec:      8.46MB
+
+--------------------Using r2d2_sqlite single connection-----------------------------
+-------------- With random age ------------------ 
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s update.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     2.51ms    1.48ms  16.48ms   72.17%
+--     Req/Sec    10.38k   523.02    11.79k    74.75%
+--   417121 requests in 10.10s, 29.83MB read
+-- Requests/sec:  41299.26
+-- Transfer/sec:      2.95MB
+--------------- With fixed age ------------------
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s update.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     1.04ms  541.86us   6.12ms   70.02%
+--     Req/Sec    24.60k     1.48k   27.56k    76.50%
+--   978855 requests in 10.00s, 70.01MB read
+-- Requests/sec:  97882.71
+-- Transfer/sec:      7.00MB
+--------------- With incremental age ------------------
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s -s update.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     2.37ms    1.43ms  17.20ms   73.56%
+--     Req/Sec    11.02k     0.86k   21.61k    96.77%
+--   440528 requests in 10.10s, 31.51MB read
+-- Requests/sec:  43618.34
+-- Transfer/sec:      3.12MB
+
 -------------------------------Using rusqlite connection directly with Arc<Mutex>------------------------
 ----------- With the same age ------------------
 -- Running 10s test @ http://localhost:3000
@@ -144,7 +178,7 @@ end
 --   502811 requests in 10.00s, 35.96MB read
 -- Requests/sec:  50273.96
 -- Transfer/sec:      3.60MB
--------------- With random age ------------------ (some results in `database is locked` Err)
+-------------- With random age ------------------
 -- Running 10s test @ http://localhost:3000
 --   4 threads and 100 connections
 --   Thread Stats   Avg      Stdev     Max   +/- Stdev
