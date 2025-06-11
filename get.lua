@@ -83,3 +83,14 @@
 --   195934 requests in 10.00s, 30.46MB read
 -- Requests/sec:  19584.82
 -- Transfer/sec:      3.04MB
+
+----------------------------The next day (with return error instead of panics)--------------------------------
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     0.99ms   83.58us   4.42ms   84.18%
+--     Req/Sec    25.34k   594.01    26.91k    68.75%
+--   1008351 requests in 10.00s, 156.75MB read
+-- Requests/sec: 100831.32
+-- Transfer/sec:     15.67MB
