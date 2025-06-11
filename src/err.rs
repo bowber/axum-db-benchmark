@@ -24,7 +24,21 @@ impl From<String> for ServerError {
 
 impl IntoResponse for ServerError {
     fn into_response(self) -> Response<Body> {
+        // Log the error message
+        tracing::error!("Server error: {}", self.message);
         let body = Body::from(self.message);
         (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+    }
+}
+
+impl From<r2d2::Error> for ServerError {
+    fn from(err: r2d2::Error) -> Self {
+        ServerError::new(&format!("Database connection error: {}", err))
+    }
+}
+
+impl From<rusqlite::Error> for ServerError {
+    fn from(err: rusqlite::Error) -> Self {
+        ServerError::new(&format!("Database error: {}", err))
     }
 }

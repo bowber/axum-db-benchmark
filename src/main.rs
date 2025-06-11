@@ -6,25 +6,24 @@ use axum::{
     http::StatusCode,
     routing::{delete, get, patch, post, put},
 };
+
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use sqlite::Connection;
+use std::thread;
 use tokio::sync::Mutex;
 use tower_http::{
     LatencyUnit,
     trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
-
 mod err;
 use err::ServerError;
 
 #[derive(Clone)]
 pub struct AppState {
-    connection: Arc<Mutex<sqlite::Connection>>,
-}
-
-thread_local! {
-    static CONNECTION: Rc<Connection> = Rc::new(Connection::open("my_database.db").unwrap());
+    connection: Pool<SqliteConnectionManager>,
 }
 
 #[tokio::main]
@@ -74,17 +73,15 @@ impl AppState {
     pub async fn init() -> Self {
         // Initialize the SQLite database connection
         #[cfg(not(test))]
-        let conn = sqlite::Connection::open("my_database.db").unwrap();
+        let manager = SqliteConnectionManager::file("my_database.db");
         // Use a different database for testing
         #[cfg(test)]
-        let conn = sqlite::Connection::open(":memory:").unwrap();
-        // Set journal mode to WAL (Write-Ahead Logging) for better concurrency
-        conn.execute(
-            "PRAGMA journal_mode=WAL;
-        PRAGMA foreign_keys=ON;",
-        )
-        .unwrap();
-        conn.execute("PRAGMA synchronous=NORMAL;").unwrap();
+        let manager = SqliteConnectionManager::memory();
+        let pool = r2d2::Pool::builder().max_size(1).build(manager).unwrap();
+        let conn = pool.get().unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         // Create the users table if it doesn't exist
         conn.execute(
             "CREATE TABLE IF NOT EXISTS users (
@@ -92,31 +89,34 @@ impl AppState {
                 username TEXT NOT NULL UNIQUE,
                 age INTEGER DEFAULT 0
             );",
+            params![],
         )
         .unwrap();
         // Create index on username for faster lookups
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_username ON users (username);")
-            .unwrap();
-        AppState {
-            connection: Arc::new(Mutex::new(conn)),
-        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_username ON users (username);",
+            params![],
+        )
+        .unwrap();
+        AppState { connection: pool }
     }
 }
 
-pub async fn create_user(
+async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<CreateUser>,
 ) -> Result<String, ServerError> {
     // create a new user in the database
-    let conn = state.connection.lock().await;
-    let mut statement = conn
-        .prepare("INSERT INTO users (username) VALUES (?);")
-        .unwrap();
-    statement.bind((1, payload.username.as_str())).unwrap();
-    let result = statement.next();
-    if result.is_err() {
+    let conn = state.connection.get()?;
+    let result = conn.execute(
+        "INSERT INTO users (username) VALUES (?);",
+        params![payload.username],
+    );
+    let changed_row =
+        result.map_err(|e| format!("Create user `{}` error: {}", payload.username, e))?;
+    if changed_row == 0 {
         // if there was an error, return a 500 Internal Server Error
-        return Err(format!("Error creating user: {:?}", result.err()).into());
+        return Err(format!("Error creating user: No rows changed").into());
     }
     // return a 201 Created status with the user data
     return Ok(format!("User created with username: {}", payload.username));
@@ -125,64 +125,56 @@ pub async fn create_user(
 pub async fn get_user_by_username(
     State(state): State<AppState>,
     Path(username): Path<String>,
-) -> Result<Json<User>, String> {
+) -> Result<Json<User>, ServerError> {
     // fetch a user by username from the database
-    let conn = state.connection.lock().await;
-    let mut statement = conn
-        .prepare("SELECT id, username, age FROM users WHERE username = ?;")
-        .unwrap();
-    statement.bind((1, username.as_str())).unwrap();
-    match statement.next() {
-        Ok(_) => {
-            // if a user was found, return it
-            let user = User {
-                username: statement
-                    .read::<String, _>("username")
-                    .map_err(|e| format!("Read username error: {}", e))?,
-                id: statement
-                    .read::<i64, _>("id")
-                    .map_err(|e| format!("Read id error: {}", e))? as u64,
-                age: statement
-                    .read::<i64, _>("age")
-                    .map_err(|e| format!("Read age error: {}", e))? as u32,
-            };
-            Ok(Json(user))
-        }
-        Err(e) => Err(format!("Get user by username error: {}", e)),
+    let conn = state.connection.get()?;
+    let result = conn.query_one(
+        "SELECT id, username, age FROM users WHERE username = ?;",
+        params![username],
+        |row| {
+            Ok(User {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                age: row.get(2)?,
+            })
+        },
+    );
+    match result {
+        Ok(user) => Ok(Json(user)),
+        Err(e) => Err(format!("Get user by username error: {}", e).into()),
     }
 }
 
-pub async fn update_user_by_username(
+async fn update_user_by_username(
     State(state): State<AppState>,
     Path(username): Path<String>,
     Json(payload): Json<UpdateUser>,
-) -> Result<StatusCode, String> {
+) -> Result<StatusCode, ServerError> {
     // update a user by username in the database
-    let conn = state.connection.lock().await;
-    let mut statement = conn
-        .prepare("UPDATE users SET age = ? WHERE username = ?;")
-        .unwrap();
-    statement.bind((1, payload.age as i64)).unwrap();
-    statement.bind((2, username.as_str())).unwrap();
-    match statement.next() {
+    let conn = state.connection.get()?;
+    let statement = conn.execute(
+        "UPDATE users SET age = ? WHERE username = ?;",
+        params![payload.age, username],
+    );
+    // statement.bind((1, payload.age as i64)).unwrap();
+    // statement.bind((2, username.as_str())).unwrap();
+    match statement {
         Ok(_) => Ok(StatusCode::OK),
-        Err(e) => Err(format!("Update user by username error: {}", e)),
+        Err(e) => Err(format!("Update user by username error: {}", e).into()),
     }
 }
 
 pub async fn delete_user_by_username(
     State(state): State<AppState>,
     Path(username): Path<String>,
-) -> Result<StatusCode, String> {
+) -> Result<StatusCode, ServerError> {
     // delete a user by username from the database
-    let conn = state.connection.lock().await;
-    let mut statement = conn
-        .prepare("DELETE FROM users WHERE username = ?;")
-        .unwrap();
-    statement.bind((1, username.as_str())).unwrap();
-    match statement.next() {
+    let conn = state.connection.get()?;
+    let statement = conn.execute("DELETE FROM users WHERE username = ?;", params![username]);
+
+    match statement {
         Ok(_) => Ok(StatusCode::OK),
-        Err(e) => Err(format!("Delete user by username error: {}", e)),
+        Err(e) => Err(format!("Delete user by username error: {}", e).into()),
     }
 }
 
@@ -206,10 +198,8 @@ pub struct User {
 }
 
 mod tests {
+    #[cfg(test)]
     use super::*;
-    use axum::body::Body;
-    use axum::http::StatusCode;
-    use axum::response::Response;
 
     #[tokio::test]
     async fn test_root() {
@@ -235,7 +225,9 @@ mod tests {
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
-        create_user(State(state.clone()), Json(payload)).await;
+        create_user(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
 
         let response = get_user_by_username(State(state), Path("testuser".to_string())).await;
         assert!(response.is_ok());
@@ -249,7 +241,9 @@ mod tests {
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
-        create_user(State(state.clone()), Json(payload)).await;
+        create_user(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
 
         let update_payload = UpdateUser { age: 30 };
         let response = update_user_by_username(
@@ -264,7 +258,6 @@ mod tests {
 
         // Verify the update
         let user_response = get_user_by_username(State(state), Path("testuser".to_string())).await;
-        assert!(user_response.is_ok());
         let user = user_response.unwrap().0;
         assert_eq!(user.username, "testuser");
         assert_eq!(user.age, 30);
@@ -275,7 +268,9 @@ mod tests {
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
-        create_user(State(state.clone()), Json(payload)).await;
+        create_user(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
 
         let response =
             delete_user_by_username(State(state.clone()), Path("testuser".to_string())).await;

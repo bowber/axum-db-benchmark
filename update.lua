@@ -1,5 +1,6 @@
+local age = 0
 request = function()
-    local body = '{"age": 22222}'
+    local body = string.format('{"age": %d}', age)
 
     local headers = {
         ["Content-Type"] = "application/json",
@@ -78,3 +79,47 @@ end
 --   196451 requests in 10.01s, 19.59MB read
 -- Requests/sec:  19632.18
 -- Transfer/sec:      1.96MB
+
+--------------------Using r2d2_sqlite pool-----------------------------
+------------- Without random age ------------------
+-- ─ ❯❯ wrk -t4 -c100 -d10s -s update.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     0.95ms    1.26ms  78.82ms   96.40%
+--     Req/Sec    30.05k   681.58    31.80k    71.04%
+--   1207786 requests in 10.10s, 86.39MB read
+-- Requests/sec: 119582.00
+-- Transfer/sec:      8.55MB
+
+-------------- With random age ------------------ (some results in `database is locked` Err)
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency    37.75ms   89.51ms   1.77s    98.59%
+--     Req/Sec   797.28     75.08     0.99k    70.00%
+--   31747 requests in 10.01s, 2.27MB read
+--   Socket errors: connect 0, read 0, write 0, timeout 13
+--   Non-2xx or 3xx responses: 3
+-- Requests/sec:   3172.99
+-- Transfer/sec:    232.42KB
+------------ With incremental age ------------------
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency    43.29ms  113.27ms   1.85s    97.86%
+--     Req/Sec   801.28     70.15     1.04k    70.25%
+--   31915 requests in 10.01s, 2.28MB read
+--   Socket errors: connect 0, read 0, write 0, timeout 14
+--   Non-2xx or 3xx responses: 2
+-- Requests/sec:   3189.11
+-- Transfer/sec:    233.59KB
+----------- With the same age ------------------
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     0.96ms    1.16ms  54.79ms   95.87%
+--     Req/Sec    29.78k     1.33k   41.86k    88.09%
+--   1194174 requests in 10.10s, 85.41MB read
+-- Requests/sec: 118238.18
+-- Transfer/sec:      8.46MB

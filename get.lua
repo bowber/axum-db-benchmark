@@ -94,3 +94,43 @@
 --   1008351 requests in 10.00s, 156.75MB read
 -- Requests/sec: 100831.32
 -- Transfer/sec:     15.67MB
+
+-----------------------------Using r2d2_sqlite pool-----------------------------
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency   815.67us  368.67us   7.00ms   77.13%
+--     Req/Sec    30.69k     1.68k   41.39k    75.93%
+--   1230760 requests in 10.10s, 176.06MB read
+-- Requests/sec: 121843.19
+-- Transfer/sec:     17.43MB
+
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency   199.03us  136.80us   4.68ms   91.95%
+--     Req/Sec   121.72k     5.00k  150.32k    82.09%
+--   4867855 requests in 10.10s, 687.07MB read
+-- Requests/sec: 481976.82
+-- Transfer/sec:     68.03MB
+
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency   188.47us  104.41us   4.27ms   87.49%
+--     Req/Sec   126.19k     3.04k  133.16k    71.53%
+--   5071603 requests in 10.10s, 715.83MB read
+-- Requests/sec: 502142.04
+-- Transfer/sec:     70.87MB
+
+-------------------------------Using r2d2_sqlite pool with only 1 connection------------------------
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency   827.78us  366.50us   5.10ms   70.27%
+--     Req/Sec    30.54k     2.61k   59.30k    91.04%
+--   1221464 requests in 10.10s, 172.40MB read
+-- Requests/sec: 120943.08
+-- Transfer/sec:     17.07MB

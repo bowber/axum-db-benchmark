@@ -106,3 +106,10 @@ end
 --   198042 requests in 10.00s, 29.24MB read
 -- Requests/sec:  19796.02
 -- Transfer/sec:      2.92MB
+
+----------------------Using r2d2_sqlite pool-----------------------------
+-- Result increasing with each run (the less successful deletion requests, the more throughput)
+-- from 9k to 73k 
+----------------------Using only single connection-----------------------------
+-- Result increasing with each run (the less successful deletion requests, the more throughput)
+-- from 51k to 137k

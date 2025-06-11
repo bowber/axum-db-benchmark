@@ -111,3 +111,48 @@ end
 -- Transfer/sec:      3.11MB
 
 ------------------------------ +50% throughput after using result instead of panic------------------
+-- ~29k
+-------------------------------Using r2d2_sqlite pool------------------------
+---------- Insert existed users
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     3.68ms    3.88ms 133.50ms   91.54%
+--     Req/Sec     8.15k     1.39k   10.29k    67.25%
+--   324492 requests in 10.00s, 46.73MB read
+--   Non-2xx or 3xx responses: 324157
+-- Requests/sec:  32434.56
+-- Transfer/sec:      4.67MB
+---------- Insert unexisting users
+-- Running 10s test @ http://localhost:3000
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency    29.18ms  105.47ms   1.84s    96.18%
+--     Req/Sec     2.26k   199.59     3.17k    69.75%
+--   90106 requests in 10.00s, 13.03MB read
+--   Socket errors: connect 0, read 0, write 0, timeout 2
+--   Non-2xx or 3xx responses: 67380
+-- Requests/sec:   9007.38
+-- Transfer/sec:      1.30MB
+
+------------- Using 1 thread wrk ---------------
+-- ╰─ ❯❯ wrk -t1 -c400 -d10s -s post.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   1 threads and 400 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency   187.27ms  293.63ms   1.97s    90.79%
+--     Req/Sec     3.07k   763.87     9.61k    95.00%
+--   30539 requests in 10.02s, 4.47MB read
+--   Socket errors: connect 0, read 0, write 0, timeout 93
+--   Non-2xx or 3xx responses: 4
+-- Requests/sec:   3047.93
+-- Transfer/sec:    457.29KB
+-------------------------------Using r2d2_sqlite pool with only 1 connection------------------------
+-- Running 10s test @ http://localhost:3000
+--   1 threads and 400 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency    18.29ms    9.07ms  91.20ms   80.90%
+--     Req/Sec    22.55k     1.06k   24.71k    81.00%
+--   224466 requests in 10.03s, 33.07MB read
+-- Requests/sec:  22379.48
+-- Transfer/sec:      3.30MB
