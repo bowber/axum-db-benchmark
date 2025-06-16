@@ -82,7 +82,7 @@ impl AppState {
             // .max_size(1)
             .build(manager.with_init(|c| {
                 c.pragma_update(None, "foreign_keys", "ON")?;
-                c.pragma_update(None, "journal_mode", "WAL")?;
+                c.pragma_update(None, "journal_mode", "WAL2")?;
                 c.pragma_update(None, "synchronous", "NORMAL")?;
                 Ok(())
             }))

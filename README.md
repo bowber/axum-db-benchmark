@@ -28,4 +28,5 @@
 - use sqlite crate with manual mutex locking sometimes results in lock error.
 - ~~2 connections dramatically decreases performance for INSERT, UPDATE, DELETE operations -> so don't use it if you just want a balanced point.~~
 - every UPDATE operation only update 1 row, bulk updates are not used in this benchmark.
+- WAL & WAL2 modes results are almost the same, but in theory, WAL2 is more stable and has better performance in read & write at the same time, which is not covered by this benchmark.
 
