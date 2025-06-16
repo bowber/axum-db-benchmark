@@ -77,11 +77,17 @@ impl AppState {
         // Use a different database for testing
         #[cfg(test)]
         let manager = SqliteConnectionManager::memory();
-        let pool = r2d2::Pool::builder().build(manager).unwrap();
+
+        let pool = r2d2::Pool::builder()
+            // .max_size(1)
+            .build(manager.with_init(|c| {
+                c.pragma_update(None, "foreign_keys", "ON")?;
+                c.pragma_update(None, "journal_mode", "WAL")?;
+                c.pragma_update(None, "synchronous", "NORMAL")?;
+                Ok(())
+            }))
+            .unwrap();
         let conn = pool.get().unwrap();
-        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
-        conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
-        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         // Create the users table if it doesn't exist
         conn.execute(
             "CREATE TABLE IF NOT EXISTS users (
