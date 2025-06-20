@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::{borrow::Cow, error::Error, rc::Rc, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -7,9 +7,8 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use bitcode::{Decode, Encode};
+use rocksdb::{DB, DBCommon, DBWithThreadMode, MultiThreaded, SingleThreaded};
 use serde::{Deserialize, Serialize};
 use std::thread;
 use tokio::sync::Mutex;
@@ -23,7 +22,7 @@ use err::ServerError;
 
 #[derive(Clone)]
 pub struct AppState {
-    connection: Pool<SqliteConnectionManager>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
 #[tokio::main]
@@ -73,32 +72,14 @@ impl AppState {
     pub async fn init() -> Self {
         // Initialize the SQLite database connection
         #[cfg(not(test))]
-        let manager = SqliteConnectionManager::file("my_database.db");
-        // Use a different database for testing
+        let dir = "./data";
         #[cfg(test)]
-        let manager = SqliteConnectionManager::memory();
-        let pool = r2d2::Pool::builder().build(manager).unwrap();
-        let conn = pool.get().unwrap();
-        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
-        conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
-        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        // Create the users table if it doesn't exist
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                age INTEGER DEFAULT 0
-            );",
-            params![],
-        )
-        .unwrap();
-        // Create index on username for faster lookups
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_username ON users (username);",
-            params![],
-        )
-        .unwrap();
-        AppState { connection: pool }
+        let tmp = tempfile::tempdir().unwrap();
+        #[cfg(test)]
+        let dir = tmp.path();
+        let db = Arc::new(DBWithThreadMode::<MultiThreaded>::open_default(dir).unwrap());
+
+        AppState { db }
     }
 }
 
@@ -106,18 +87,27 @@ async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<CreateUser>,
 ) -> Result<String, ServerError> {
-    // create a new user in the database
-    let conn = state.connection.get()?;
-    let result = conn.execute(
-        "INSERT INTO users (username) VALUES (?);",
-        params![payload.username],
-    );
-    let changed_row =
-        result.map_err(|e| format!("Create user `{}` error: {}", payload.username, e))?;
-    if changed_row == 0 {
-        // if there was an error, return a 500 Internal Server Error
-        return Err(format!("Error creating user: No rows changed").into());
+    // Check if the username is duplicate
+    if state
+        .db
+        .get(&payload.username)
+        .map_err(|e| format!("Database error: {}", e))?
+        .is_some()
+    {
+        return Err(format!(
+            "Create user error: Username '{}' already exists",
+            payload.username
+        )
+        .into());
     }
+    let user = User {
+        id: 0, // id will be ignored as we just want to keep the structure of the benchmark
+        username: payload.username.clone(),
+        age: 0, // default age
+    };
+    let encoded_user = bitcode::encode(&user);
+    state.db.put(&payload.username, encoded_user)?;
+
     // return a 201 Created status with the user data
     return Ok(format!("User created with username: {}", payload.username));
 }
@@ -127,22 +117,14 @@ pub async fn get_user_by_username(
     Path(username): Path<String>,
 ) -> Result<Json<User>, ServerError> {
     // fetch a user by username from the database
-    let conn = state.connection.get()?;
-    let result = conn.query_one(
-        "SELECT id, username, age FROM users WHERE username = ?;",
-        params![username],
-        |row| {
-            Ok(User {
-                id: row.get(0)?,
-                username: row.get(1)?,
-                age: row.get(2)?,
-            })
-        },
-    );
-    match result {
-        Ok(user) => Ok(Json(user)),
-        Err(e) => Err(format!("Get user by username error: {}", e).into()),
-    }
+    let result = state
+        .db
+        .get(&username)
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or(format!("Get user by username error: User not found"))?;
+    let decoded_user: User =
+        bitcode::decode(&result).map_err(|e| format!("Failed to decode User: {}", e))?;
+    Ok(Json(decoded_user))
 }
 
 async fn update_user_by_username(
@@ -151,17 +133,21 @@ async fn update_user_by_username(
     Json(payload): Json<UpdateUser>,
 ) -> Result<StatusCode, ServerError> {
     // update a user by username in the database
-    let conn = state.connection.get()?;
-    let statement = conn.execute(
-        "UPDATE users SET age = ? WHERE username = ?;",
-        params![payload.age, username],
-    );
-    // statement.bind((1, payload.age as i64)).unwrap();
-    // statement.bind((2, username.as_str())).unwrap();
-    match statement {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => Err(format!("Update user by username error: {}", e).into()),
-    }
+    let result = state
+        .db
+        .get(&username)
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or(format!("Update user by username error: User not found"))?;
+    let decoded_user: User =
+        bitcode::decode(&result).map_err(|e| format!("Failed to decode User: {}", e))?;
+    // Update the user's age
+    let encoded_user = bitcode::encode(&User {
+        id: decoded_user.id,                     // keep the same id
+        username: decoded_user.username.clone(), // keep the same username
+        age: payload.age,                        // update the age
+    });
+    state.db.put(&username, &encoded_user)?;
+    Ok(StatusCode::OK)
 }
 
 pub async fn delete_user_by_username(
@@ -169,13 +155,8 @@ pub async fn delete_user_by_username(
     Path(username): Path<String>,
 ) -> Result<StatusCode, ServerError> {
     // delete a user by username from the database
-    let conn = state.connection.get()?;
-    let statement = conn.execute("DELETE FROM users WHERE username = ?;", params![username]);
-
-    match statement {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => Err(format!("Delete user by username error: {}", e).into()),
-    }
+    state.db.delete(&username)?;
+    Ok(StatusCode::OK)
 }
 
 // the input to our `create_user` handler
@@ -190,12 +171,30 @@ struct UpdateUser {
 }
 
 // the output to our `create_user` handler
-#[derive(Serialize)]
+#[derive(Encode, Decode, Serialize)]
 pub struct User {
     pub id: u64,
     pub username: String,
     pub age: u32,
 }
+
+// impl<'a> BytesDecode<'a> for User {
+//     type DItem = Self;
+//     fn bytes_decode(bytes: &[u8]) -> Result<Self, Box<dyn Error + Send + Sync + 'static>> {
+//         match bitcode::decode(&bytes) {
+//             Ok(user) => Ok(user),
+//             Err(e) => Err(format!("Failed to decode User: {}", e).into()),
+//         }
+//     }
+// }
+
+// impl<'a> BytesEncode<'a> for User {
+//     type EItem = Self;
+//     fn bytes_encode(item: &'a Self::EItem) -> Result<Cow<'a, [u8]>, BoxedError> {
+//         let v = bitcode::encode(item);
+//         Ok(Cow::Owned(v))
+//     }
+// }
 
 mod tests {
     #[cfg(test)]
@@ -218,6 +217,20 @@ mod tests {
             status,
             Ok("User created with username: testuser".to_string())
         );
+    }
+    #[tokio::test]
+    async fn test_create_user_upplicated() {
+        let payload = CreateUser {
+            username: "this is the dup key".to_string(), // Invalid username
+        };
+        let state = AppState::init().await;
+        create_user(State(state.clone()), Json(payload.clone()))
+            .await
+            .unwrap();
+        let status = create_user(State(state), Json(payload)).await;
+        // Expect an error due to invalid username
+
+        assert!(status.is_err());
     }
     #[tokio::test]
     async fn test_get_user_by_username() {

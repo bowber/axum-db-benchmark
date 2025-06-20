@@ -1,155 +1,31 @@
-
--------------------------With mutex ---------------------------
--- ╭─bowber   󰉖 ~
 -- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
 -- Running 10s test @ http://localhost:3000/users/hello
 --   4 threads and 100 connections
 --   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     5.52ms    6.33ms  90.94ms   92.83%
---     Req/Sec     5.42k     0.89k    7.17k    79.00%
---   215711 requests in 10.01s, 29.42MB read
--- Requests/sec:  21558.87
--- Transfer/sec:      2.94MB
+--     Latency   108.54us   76.05us   3.66ms   94.43%
+--     Req/Sec   150.64k     7.40k  182.49k    87.06%
+--   6025017 requests in 10.10s, 821.66MB read
+-- Requests/sec: 596534.92
+-- Transfer/sec:     81.35MB
 
--- ╭─bowber   󰉖 ~
--- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/helloo
--- Running 10s test @ http://localhost:3000/users/helloo
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     4.78ms    3.68ms  23.82ms   81.53%
---     Req/Sec     5.71k   541.70     6.77k    65.75%
---   227445 requests in 10.00s, 35.36MB read
--- Requests/sec:  22733.89
--- Transfer/sec:      3.53MB
-
---------------------------Multi threading flag -------------------------
+-- max map size = 1GB | same result as before
+-- ╰─ ❯❯  wrk -t4 -c100 -d10s http://localhost:3000/users/hello
 -- Running 10s test @ http://localhost:3000/users/hello
 --   4 threads and 100 connections
 --   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     6.40ms    5.90ms  39.05ms   72.92%
---     Req/Sec     4.66k   524.73     5.82k    63.75%
---   185477 requests in 10.00s, 26.00MB read
--- Requests/sec:  18541.00
--- Transfer/sec:      2.60MB
+--     Latency   104.32us   59.90us   3.37ms   88.20%
+--     Req/Sec   150.89k     4.51k  179.27k    82.34%
+--   6035260 requests in 10.10s, 840.33MB read
+-- Requests/sec: 597545.35
+-- Transfer/sec:     83.20MB
 
--- Running 10s test @ http://localhost:3000/users/helloo
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     6.40ms    5.77ms  37.01ms   72.54%
---     Req/Sec     4.60k   446.08     5.64k    63.50%
---   183010 requests in 10.01s, 28.45MB read
--- Requests/sec:  18291.01
--- Transfer/sec:      2.84MB
-
------------------------On VPS -------------------------------------
--- Running 10s test @ http://localhost:3100/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency    94.68ms   97.28ms 439.52ms   81.69%
---     Req/Sec   397.43    210.97     1.02k    71.90%
---   13862 requests in 10.01s, 1.94MB read
--- Requests/sec:   1384.61
--- Transfer/sec:    198.77KB
-
--- Revert to manual mutex
--- root@t1no2:~/test# wrk -t4 -c100 -d10s  http://localhost:3100/users/hello
--- Running 10s test @ http://localhost:3100/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency    78.76ms   78.70ms 319.65ms   82.83%
---     Req/Sec   447.50    236.73     1.21k    61.33%
---   16177 requests in 10.03s, 2.27MB read
--- Requests/sec:   1613.34
--- Transfer/sec:    231.60KB
-
-----------------------Back to my PC-----------------------------------
--- Using local_thread!
--- ─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
--- Running 10s test @ http://localhost:3000/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     6.14ms    5.91ms  26.30ms   74.22%
---     Req/Sec     5.01k   464.02     5.90k    63.75%
---   199639 requests in 10.01s, 27.99MB read
--- Requests/sec:  19950.87
--- Transfer/sec:      2.80MB
-
--- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello0
--- Running 10s test @ http://localhost:3000/users/hello0
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     6.28ms    6.10ms  38.86ms   74.87%
---     Req/Sec     4.92k   512.28     5.92k    62.00%
---   195934 requests in 10.00s, 30.46MB read
--- Requests/sec:  19584.82
--- Transfer/sec:      3.04MB
-
-----------------------------The next day (with return error instead of panics)--------------------------------
+-------------------------------RocksDB Benchmark-------------------------------
 -- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
 -- Running 10s test @ http://localhost:3000/users/hello
 --   4 threads and 100 connections
 --   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     0.99ms   83.58us   4.42ms   84.18%
---     Req/Sec    25.34k   594.01    26.91k    68.75%
---   1008351 requests in 10.00s, 156.75MB read
--- Requests/sec: 100831.32
--- Transfer/sec:     15.67MB
-
------------------------------Using r2d2_sqlite pool-----------------------------
--- Running 10s test @ http://localhost:3000/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency   815.67us  368.67us   7.00ms   77.13%
---     Req/Sec    30.69k     1.68k   41.39k    75.93%
---   1230760 requests in 10.10s, 176.06MB read
--- Requests/sec: 121843.19
--- Transfer/sec:     17.43MB
-
--- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
--- Running 10s test @ http://localhost:3000/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency   199.03us  136.80us   4.68ms   91.95%
---     Req/Sec   121.72k     5.00k  150.32k    82.09%
---   4867855 requests in 10.10s, 687.07MB read
--- Requests/sec: 481976.82
--- Transfer/sec:     68.03MB
-
--- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
--- Running 10s test @ http://localhost:3000/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency   188.47us  104.41us   4.27ms   87.49%
---     Req/Sec   126.19k     3.04k  133.16k    71.53%
---   5071603 requests in 10.10s, 715.83MB read
--- Requests/sec: 502142.04
--- Transfer/sec:     70.87MB
-
--------------------------------Using r2d2_sqlite pool with only 1 connection------------------------
--- Running 10s test @ http://localhost:3000/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency   827.78us  366.50us   5.10ms   70.27%
---     Req/Sec    30.54k     2.61k   59.30k    91.04%
---   1221464 requests in 10.10s, 172.40MB read
--- Requests/sec: 120943.08
--- Transfer/sec:     17.07MB
--------------------------------Using rusqlite connection directly with Arc<Mutex>------------------------
--- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
--- Running 10s test @ http://localhost:3000/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     0.99ms  119.05us   4.97ms   93.10%
---     Req/Sec    25.41k     0.89k   26.76k    74.00%
---   1011426 requests in 10.00s, 142.76MB read
--- Requests/sec: 101137.76
--- Transfer/sec:     14.27MB
-
--- Running 10s test @ http://localhost:3000/users/hello
---   4 threads and 100 connections
---   Thread Stats   Avg      Stdev     Max   +/- Stdev
---     Latency     1.06ms  154.26us   4.82ms   88.93%
---     Req/Sec    23.70k     1.29k   26.58k    69.00%
---   943634 requests in 10.00s, 133.19MB read
--- Requests/sec:  94359.90
--- Transfer/sec:     13.32MB
+--     Latency   102.12us   50.38us   3.36ms   80.67%
+--     Req/Sec   150.93k     2.82k  177.81k    79.60%
+--   6035890 requests in 10.10s, 823.15MB read
+-- Requests/sec: 597651.10
+-- Transfer/sec:     81.50MB
