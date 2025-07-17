@@ -1,30 +1,26 @@
-## Conclusion:
-- Write performance (INSERT, UPDATE, DELETE) is significantly better with the single-connection approach. (8x)
-- Read performance (SELECT, UPDATE without changing value) is significantly better with the multi-connection approach. (5x)
-
-## Max throughput:
-### Single-connection (best result when using r2d2_sqlite with a single connection):
-- SELECT: 120,943 rows/sec
-- INSERT: 22,379 rows/sec
-- UPDATE: 41,299 rows/sec (97,882 without changing value)
-- DELETE: 51k to 137k rows/sec (the less successful deletion requests, the more throughput you get)
-
-### Multi-connection (best result when using r2d2_sqlite with multiple connections):
-- SELECT: 502,142 rows/sec
-- INSERT: 3,047 rows/sec
-- UPDATE: 3,172 rows/sec (119,582 without changing value)
-- DELETE: 9k to 73k rows/sec (the less successful deletion requests, the more throughput you get)
-
-## Pragma settings (good enough for a persistent database & can be used in production):
-- journal_mode = WAL
-- synchronous = NORMAL
-- foreign_keys = ON
-
-## Some little notes::
-- Benchmarking using wrk calling Axum http server (for more realistic results).
-- r2d2_sqlite results are better in most cases compared to rusqlite or bare sqlite crate.
-- rusqlite is better for single-connection use cases (but not much compared to r2d2_sqlite).
-- use sqlite crate with manual mutex locking sometimes results in lock error.
-- 2 connections dramatically decreases performance for INSERT, UPDATE, DELETE operations -> so don't use it if you just want a balanced point.
-- every UPDATE operation only update 1 row, bulk updates are not used in this benchmark.
-
+## SQLite vs RocksDB
+### Performance (small VPS 4 cores CPU + SSD)
+- READ: ROCKSDB ~ 60k ops/s
+- CREATE: ROCKSDB  ~ 22k ops/s
+- UPDATE: ROCKSDB ~ 23k ops/s
+- DELETE: ROCKSDB  ~ 26k ops/s
+### Performance (high-end laptop 16 cores CPU + NVME SSD)
+- READ: ROCKSDB ~ 1.2 x SQLITE ~ 600k ops/s
+- CREATE: ROCKSDB ~ 6x SQLITE ~ 136k ops/s
+- UPDATE: ROCKSDB ~ 5x SQLITE ~ 222k ops/s
+- DELETE: ROCKSDB ~ 5x SQLITE ~ 250k ops/s
+### Scalability
+- SQLite scales well for reads with the number of CPU cores, but not for writes.
+- RocksDB scales well for both reads and writes.
+- Both are difficult to scale across multiple machines because they are embedded databases.
+### RAM usage
+- sqlite should always have low RAM usage
+- RocksDB should use more, but this test only get and update a single record, so the RAM usage is negligible.
+### Setup (both are production-ready)
+- RocksDB use default setup via rust-rocksdb crate version 0.23.0
+- Sqlite via r2d2-sqlite crate and tuning these PRAGMA:
+```
+journal_mode = WAL
+synchronous = NORMAL
+foreign_keys = ON
+```
