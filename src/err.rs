@@ -31,6 +31,12 @@ impl IntoResponse for ServerError {
     }
 }
 
+impl From<sqlx::Error> for ServerError {
+    fn from(err: sqlx::Error) -> Self {
+        ServerError::new(&format!("Database error: {}", err))
+    }
+}
+
 // impl From<heed::Error> for ServerError {
 //     fn from(err: heed::Error) -> Self {
 //         ServerError::new(&format!("Database error: {}", err))

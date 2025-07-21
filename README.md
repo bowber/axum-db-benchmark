@@ -11,7 +11,7 @@
 - sqlite should always have low RAM usage
 - PostgreSQL is the same but will use some extra for multi-process architecture.
 ### Setup (both are production-ready)
-- PostgreSQL via `tokio-postgres` and `deadpool-postgres` crates.
+- PostgreSQL via `tokio-postgres` and `deadpool-postgres` crates. (Tried `sqlx` but it was almost the same.)
 - Sqlite via r2d2-sqlite crate and tuning these PRAGMA:
 ```
 journal_mode = WAL

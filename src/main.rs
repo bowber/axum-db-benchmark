@@ -1,17 +1,21 @@
-use std::{borrow::Cow, error::Error, rc::Rc, sync::Arc};
-
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::{delete, get, patch, post, put},
 };
+use sqlx::Row;
+use std::{
+    borrow::Cow,
+    error::Error,
+    rc::Rc,
+    sync::{Arc, RwLock},
+};
 
-use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use serde::{Deserialize, Serialize};
+use sqlx::{Connection, PgConnection, PgPool, postgres::PgConnectOptions, query};
 use std::thread;
 use tokio::sync::Mutex;
-use tokio_postgres::NoTls;
 use tower_http::{
     LatencyUnit,
     trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -22,7 +26,7 @@ use err::ServerError;
 
 #[derive(Clone)]
 pub struct AppState {
-    pool: Pool,
+    pool: PgPool,
 }
 
 #[tokio::main]
@@ -76,33 +80,31 @@ impl AppState {
         let random_uuid = uuid::Uuid::new_v4();
         #[cfg(test)]
         let dbname = format!("mydb_{}", random_uuid.to_string().replace("-", ""));
-        let mut pg_config = tokio_postgres::Config::new();
-        pg_config.host("localhost");
-        pg_config.port(5432);
-        pg_config.user("myuser");
-        pg_config.password("mypassword");
+        let pg_config = PgConnectOptions::new()
+            .host("localhost")
+            .port(5432)
+            .username("myuser")
+            .password("mypassword")
+            .database(&dbname);
         // Create the database if it doesn't exist (dbname)
         {
             info!("Connecting to PostgreSQL to create database if it doesn't exist");
-            let mut tmp_pg_config = pg_config.clone();
-            tmp_pg_config.dbname("postgres");
-            let tmp_client = tmp_pg_config
-                .connect(NoTls)
+            let mut tmp_pg_config = pg_config.clone().database("postgres");
+            let mut tmp_client = PgConnection::connect_with(&tmp_pg_config)
                 .await
                 .expect("Failed to connect to PostgreSQL");
             info!("Creating database: {}", dbname);
-            tokio::spawn(async move {
-                if let Err(e) = tmp_client.1.await {
-                    eprintln!("connection error: {}", e);
-                }
-            });
             // Check if the database already exists
             let query = "SELECT 1 FROM pg_database WHERE datname = $1";
-            let exists = tmp_client.0.query_one(query, &[&dbname]).await.is_ok();
+            let exists = sqlx::query(query)
+                .bind(&dbname)
+                .fetch_optional(&mut tmp_client)
+                .await
+                .expect("Failed to check if database exists")
+                .is_some();
             if !exists {
-                tmp_client
-                    .0
-                    .execute(&format!("CREATE DATABASE {};", dbname), &[])
+                sqlx::query(&format!("CREATE DATABASE {}", dbname))
+                    .execute(&mut tmp_client)
                     .await
                     .expect("Failed to create database");
             }
@@ -110,34 +112,34 @@ impl AppState {
             // Setup connection pool
         }
         info!("Connecting to PostgreSQL database: {}", dbname);
-        pg_config.dbname(dbname);
-        let mgr_config = ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        };
-        let mgr = Manager::from_config(pg_config, NoTls, mgr_config);
-        let pool = Pool::builder(mgr).max_size(64).build().unwrap();
-        let client = pool.get().await.unwrap();
+        let mut connection = PgConnection::connect_with(&pg_config)
+            .await
+            .expect("Failed to connect to PostgreSQL");
         // Create the users table if it doesn't exist
-
-        client
-            .execute(
-                "CREATE TABLE IF NOT EXISTS users (
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     age INTEGER NOT NULL DEFAULT 0
 )",
-                &[],
-            )
-            .await
-            .unwrap();
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
         // Create index on username for faster lookups if it doesn't exist
-        client
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
-                &[],
-            )
+        // client
+        //     .execute(
+        //         "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
+        //         &[],
+        //     )
+        //     .await
+        //     .unwrap();
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
+            .execute(&mut connection)
             .await
             .unwrap();
+        let pool = sqlx::PgPool::connect_with(pg_config).await.unwrap();
+
         AppState { pool }
     }
 }
@@ -171,17 +173,20 @@ async fn create_user(
     // return Ok(format!("User created with username: {}", payload.username));
 
     // Insert a user into the database
-    let client = state
-        .pool
-        .get()
-        .await
-        .map_err(|e| format!("Database error: {}", e))?;
+    let client = state.pool;
     let query = "INSERT INTO users (username, age) VALUES ($1, $2) RETURNING id";
-    let is_inserted = client
-        .execute(query, &[&payload.username, &0])
+    // let is_inserted = client
+    //     .execute(query, &[&payload.username, &0])
+    //     .await
+    //     .map_err(|e| format!("Insert user error: {}", e))
+    //     .is_ok_and(|v| v > 0);
+    let is_inserted = sqlx::query(query)
+        .bind(&payload.username)
+        .bind(0) // default age
+        .execute(&client)
         .await
         .map_err(|e| format!("Insert user error: {}", e))
-        .is_ok_and(|v| v > 0);
+        .is_ok_and(|v| v.rows_affected() > 0);
     if !is_inserted {
         return Err(format!("Failed to create user: {}", payload.username).into());
     }
@@ -193,18 +198,19 @@ pub async fn get_user_by_username(
     Path(username): Path<String>,
 ) -> Result<Json<User>, ServerError> {
     // fetch a user by username from the database
-    let client = state
-        .pool
-        .get()
-        .await
-        .map_err(|e| format!("Database error: {}", e))?;
+    let client = state.pool;
     let query = "SELECT id, username, age FROM users WHERE username = $1";
-    let row = client
-        .query_one(query, &[&username])
+    // let row = client
+    //     .query_one(query, &[&username])
+    //     .await
+    //     .map_err(|e| format!("Get user by username error: {}", e))?;
+    let row = sqlx::query(query)
+        .bind(&username)
+        .fetch_one(&client)
         .await
         .map_err(|e| format!("Get user by username error: {}", e))?;
     let user = User {
-        id: row.get::<usize, i64>(0) as u64,
+        id: row.try_get(0)?, // assuming id is a BIGSERIAL
         username: row.get(1),
         age: row.get(2),
     };
@@ -217,18 +223,16 @@ async fn update_user_by_username(
     Json(payload): Json<UpdateUser>,
 ) -> Result<StatusCode, ServerError> {
     // update a user by username in the database
-    let client = state
-        .pool
-        .get()
-        .await
-        .map_err(|e| format!("Database error: {}", e))?;
+    let client = state.pool;
     let query = "UPDATE users SET age = $1 WHERE username = $2";
-    let rows_updated = client
-        .execute(query, &[&payload.age, &username])
+    let rows_updated = sqlx::query(query)
+        .bind(&payload.age)
+        .bind(&username)
+        .execute(&client)
         .await
         .map_err(|e| format!("Update user by username error: {}", e))?;
 
-    if rows_updated == 0 {
+    if rows_updated.rows_affected() == 0 {
         return Err(format!("User with username '{}' not found", username).into());
     }
 
@@ -240,18 +244,15 @@ pub async fn delete_user_by_username(
     Path(username): Path<String>,
 ) -> Result<StatusCode, ServerError> {
     // delete a user by username from the database
-    let client = state
-        .pool
-        .get()
-        .await
-        .map_err(|e| format!("Database error: {}", e))?;
+    let client = state.pool;
     let query = "DELETE FROM users WHERE username = $1";
-    let rows_deleted = client
-        .execute(query, &[&username])
+    let rows_deleted = sqlx::query(query)
+        .bind(&username)
+        .execute(&client)
         .await
         .map_err(|e| format!("Delete user by username error: {}", e))?;
 
-    if rows_deleted == 0 {
+    if rows_deleted.rows_affected() == 0 {
         return Err(format!("User with username '{}' not found", username).into());
     }
 
@@ -272,7 +273,7 @@ struct UpdateUser {
 // the output to our `create_user` handler
 #[derive(Serialize)]
 pub struct User {
-    pub id: u64,
+    pub id: i64,
     pub username: String,
     pub age: i32,
 }
