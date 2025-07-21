@@ -44,3 +44,25 @@ end
 --   1371148 requests in 10.05s, 202.93MB read
 -- Requests/sec: 136387.47
 -- Transfer/sec:     20.19MB
+
+---------------------------------PostgreSQL Benchmark---------------------------------
+-- ╰─ ❯❯ wrk -t1 -c400 -d10s -s post.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   1 threads and 400 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency    17.23ms    2.06ms  40.95ms   74.09%
+--     Req/Sec    23.29k     1.89k   25.85k    73.00%
+--   231756 requests in 10.03s, 34.15MB read
+-- Requests/sec:  23112.42
+-- Transfer/sec:      3.41MB
+
+-- Increase the max size of the connection pool to 64 and add an index on username for faster lookups
+-- ╰─ ❯❯ wrk -t1 -c400 -d10s -s post.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   1 threads and 400 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency    10.48ms    1.82ms  33.21ms   92.49%
+--     Req/Sec    38.24k     2.57k   43.29k    77.00%
+--   380317 requests in 10.02s, 56.11MB read
+-- Requests/sec:  37937.69
+-- Transfer/sec:      5.60MB

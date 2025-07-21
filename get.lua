@@ -29,3 +29,25 @@
 --   6035890 requests in 10.10s, 823.15MB read
 -- Requests/sec: 597651.10
 -- Transfer/sec:     81.50MB
+
+-----------------------PostgreSQL Benchmark-----------------
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     2.19ms  283.63us  11.59ms   88.79%
+--     Req/Sec    11.43k     1.74k   45.03k    98.75%
+--   456044 requests in 10.10s, 62.19MB read
+-- Requests/sec:  45152.41
+-- Transfer/sec:      6.16MB
+
+-- Increse the max size of the connection pool to 64 and add an index on username for faster lookups
+-- ╰─ ❯❯ wrk -t4 -c100 -d10s http://localhost:3000/users/hello
+-- Running 10s test @ http://localhost:3000/users/hello
+--   4 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     1.74ms  756.88us  37.46ms   91.68%
+--     Req/Sec    14.47k   732.06    15.62k    85.00%
+--   575773 requests in 10.00s, 78.52MB read
+-- Requests/sec:  57565.30
+-- Transfer/sec:      7.85MB

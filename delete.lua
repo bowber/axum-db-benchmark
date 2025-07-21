@@ -28,3 +28,15 @@ end
 --   2523214 requests in 10.01s, 180.47MB read
 -- Requests/sec: 252060.77
 -- Transfer/sec:     18.03MB
+
+----------------------------- PostgreSQL Benchmark -----------------------------
+-- ╰─ ❯❯ wrk -t1 -c100 -d10s -s delete.lua http://localhost:3000
+-- Running 10s test @ http://localhost:3000
+--   1 threads and 100 connections
+--   Thread Stats   Avg      Stdev     Max   +/- Stdev
+--     Latency     2.69ms    1.94ms  29.05ms   93.94%
+--     Req/Sec    40.02k     8.86k   46.83k    89.00%
+--   398220 requests in 10.01s, 29.51MB read
+--   Non-2xx or 3xx responses: 17730
+-- Requests/sec:  39801.95
+-- Transfer/sec:      2.95MB

@@ -7,22 +7,22 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 
-use bitcode::{Decode, Encode};
-use rocksdb::{DB, DBCommon, DBWithThreadMode, MultiThreaded, SingleThreaded};
+use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use serde::{Deserialize, Serialize};
 use std::thread;
 use tokio::sync::Mutex;
+use tokio_postgres::NoTls;
 use tower_http::{
     LatencyUnit,
     trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
-use tracing::Level;
+use tracing::{Level, info};
 mod err;
 use err::ServerError;
 
 #[derive(Clone)]
 pub struct AppState {
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    pool: Pool,
 }
 
 #[tokio::main]
@@ -70,16 +70,75 @@ async fn root(State(_): State<AppState>) -> &'static str {
 }
 impl AppState {
     pub async fn init() -> Self {
-        // Initialize the SQLite database connection
         #[cfg(not(test))]
-        let dir = "./data";
+        let dbname = "mydb";
         #[cfg(test)]
-        let tmp = tempfile::tempdir().unwrap();
+        let random_uuid = uuid::Uuid::new_v4();
         #[cfg(test)]
-        let dir = tmp.path();
-        let db = Arc::new(DBWithThreadMode::<MultiThreaded>::open_default(dir).unwrap());
+        let dbname = format!("mydb_{}", random_uuid.to_string().replace("-", ""));
+        let mut pg_config = tokio_postgres::Config::new();
+        pg_config.host("localhost");
+        pg_config.port(5432);
+        pg_config.user("myuser");
+        pg_config.password("mypassword");
+        // Create the database if it doesn't exist (dbname)
+        {
+            info!("Connecting to PostgreSQL to create database if it doesn't exist");
+            let mut tmp_pg_config = pg_config.clone();
+            tmp_pg_config.dbname("postgres");
+            let tmp_client = tmp_pg_config
+                .connect(NoTls)
+                .await
+                .expect("Failed to connect to PostgreSQL");
+            info!("Creating database: {}", dbname);
+            tokio::spawn(async move {
+                if let Err(e) = tmp_client.1.await {
+                    eprintln!("connection error: {}", e);
+                }
+            });
+            // Check if the database already exists
+            let query = "SELECT 1 FROM pg_database WHERE datname = $1";
+            let exists = tmp_client.0.query_one(query, &[&dbname]).await.is_ok();
+            if !exists {
+                tmp_client
+                    .0
+                    .execute(&format!("CREATE DATABASE {};", dbname), &[])
+                    .await
+                    .expect("Failed to create database");
+            }
+            info!("Database created or already exists: {}", dbname);
+            // Setup connection pool
+        }
+        info!("Connecting to PostgreSQL database: {}", dbname);
+        pg_config.dbname(dbname);
+        let mgr_config = ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        };
+        let mgr = Manager::from_config(pg_config, NoTls, mgr_config);
+        let pool = Pool::builder(mgr).max_size(64).build().unwrap();
+        let client = pool.get().await.unwrap();
+        // Create the users table if it doesn't exist
 
-        AppState { db }
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    age INTEGER NOT NULL DEFAULT 0
+)",
+                &[],
+            )
+            .await
+            .unwrap();
+        // Create index on username for faster lookups if it doesn't exist
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
+                &[],
+            )
+            .await
+            .unwrap();
+        AppState { pool }
     }
 }
 
@@ -88,27 +147,44 @@ async fn create_user(
     Json(payload): Json<CreateUser>,
 ) -> Result<String, ServerError> {
     // Check if the username is duplicate
-    if state
-        .db
-        .get(&payload.username)
-        .map_err(|e| format!("Database error: {}", e))?
-        .is_some()
-    {
-        return Err(format!(
-            "Create user error: Username '{}' already exists",
-            payload.username
-        )
-        .into());
-    }
-    let user = User {
-        id: 0, // id will be ignored as we just want to keep the structure of the benchmark
-        username: payload.username.clone(),
-        age: 0, // default age
-    };
-    let encoded_user = bitcode::encode(&user);
-    state.db.put(&payload.username, encoded_user)?;
+    // if state
+    //     .db
+    //     .get(&payload.username)
+    //     .map_err(|e| format!("Database error: {}", e))?
+    //     .is_some()
+    // {
+    //     return Err(format!(
+    //         "Create user error: Username '{}' already exists",
+    //         payload.username
+    //     )
+    //     .into());
+    // }
+    // let user = User {
+    //     id: 0, // id will be ignored as we just want to keep the structure of the benchmark
+    //     username: payload.username.clone(),
+    //     age: 0, // default age
+    // };
+    // let encoded_user = bitcode::encode(&user);
+    // state.db.put(&payload.username, encoded_user)?;
 
-    // return a 201 Created status with the user data
+    // // return a 201 Created status with the user data
+    // return Ok(format!("User created with username: {}", payload.username));
+
+    // Insert a user into the database
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+    let query = "INSERT INTO users (username, age) VALUES ($1, $2) RETURNING id";
+    let is_inserted = client
+        .execute(query, &[&payload.username, &0])
+        .await
+        .map_err(|e| format!("Insert user error: {}", e))
+        .is_ok_and(|v| v > 0);
+    if !is_inserted {
+        return Err(format!("Failed to create user: {}", payload.username).into());
+    }
     return Ok(format!("User created with username: {}", payload.username));
 }
 
@@ -117,14 +193,22 @@ pub async fn get_user_by_username(
     Path(username): Path<String>,
 ) -> Result<Json<User>, ServerError> {
     // fetch a user by username from the database
-    let result = state
-        .db
-        .get(&username)
-        .map_err(|e| format!("Database error: {}", e))?
-        .ok_or(format!("Get user by username error: User not found"))?;
-    let decoded_user: User =
-        bitcode::decode(&result).map_err(|e| format!("Failed to decode User: {}", e))?;
-    Ok(Json(decoded_user))
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+    let query = "SELECT id, username, age FROM users WHERE username = $1";
+    let row = client
+        .query_one(query, &[&username])
+        .await
+        .map_err(|e| format!("Get user by username error: {}", e))?;
+    let user = User {
+        id: row.get::<usize, i64>(0) as u64,
+        username: row.get(1),
+        age: row.get(2),
+    };
+    Ok(Json(user))
 }
 
 async fn update_user_by_username(
@@ -133,20 +217,21 @@ async fn update_user_by_username(
     Json(payload): Json<UpdateUser>,
 ) -> Result<StatusCode, ServerError> {
     // update a user by username in the database
-    let result = state
-        .db
-        .get(&username)
-        .map_err(|e| format!("Database error: {}", e))?
-        .ok_or(format!("Update user by username error: User not found"))?;
-    let decoded_user: User =
-        bitcode::decode(&result).map_err(|e| format!("Failed to decode User: {}", e))?;
-    // Update the user's age
-    let encoded_user = bitcode::encode(&User {
-        id: decoded_user.id,                     // keep the same id
-        username: decoded_user.username.clone(), // keep the same username
-        age: payload.age,                        // update the age
-    });
-    state.db.put(&username, &encoded_user)?;
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+    let query = "UPDATE users SET age = $1 WHERE username = $2";
+    let rows_updated = client
+        .execute(query, &[&payload.age, &username])
+        .await
+        .map_err(|e| format!("Update user by username error: {}", e))?;
+
+    if rows_updated == 0 {
+        return Err(format!("User with username '{}' not found", username).into());
+    }
+
     Ok(StatusCode::OK)
 }
 
@@ -155,7 +240,21 @@ pub async fn delete_user_by_username(
     Path(username): Path<String>,
 ) -> Result<StatusCode, ServerError> {
     // delete a user by username from the database
-    state.db.delete(&username)?;
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+    let query = "DELETE FROM users WHERE username = $1";
+    let rows_deleted = client
+        .execute(query, &[&username])
+        .await
+        .map_err(|e| format!("Delete user by username error: {}", e))?;
+
+    if rows_deleted == 0 {
+        return Err(format!("User with username '{}' not found", username).into());
+    }
+
     Ok(StatusCode::OK)
 }
 
@@ -167,15 +266,15 @@ struct CreateUser {
 
 #[derive(Deserialize, Clone)]
 struct UpdateUser {
-    age: u32,
+    age: i32,
 }
 
 // the output to our `create_user` handler
-#[derive(Encode, Decode, Serialize)]
+#[derive(Serialize)]
 pub struct User {
     pub id: u64,
     pub username: String,
-    pub age: u32,
+    pub age: i32,
 }
 
 // impl<'a> BytesDecode<'a> for User {
@@ -266,7 +365,7 @@ mod tests {
         )
         .await;
 
-        assert!(response.is_ok());
+        // assert!(response.is_ok());
         assert_eq!(response.unwrap(), StatusCode::OK);
 
         // Verify the update

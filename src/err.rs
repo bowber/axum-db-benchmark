@@ -31,12 +31,6 @@ impl IntoResponse for ServerError {
     }
 }
 
-impl From<rocksdb::Error> for ServerError {
-    fn from(err: rocksdb::Error) -> Self {
-        ServerError::new(&format!("Database error: {}", err))
-    }
-}
-
 // impl From<heed::Error> for ServerError {
 //     fn from(err: heed::Error) -> Self {
 //         ServerError::new(&format!("Database error: {}", err))
