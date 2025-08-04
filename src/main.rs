@@ -4,41 +4,72 @@ use axum::{
     http::StatusCode,
     routing::{delete, get, patch, post},
 };
-
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
-use serde::{Deserialize, Serialize};
 use tower_http::{
     LatencyUnit,
     trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
+
+mod config;
+mod database;
+mod databases;
 mod err;
+
+use config::DatabaseType;
+use database::{CreateUser, Database, UpdateUser, User};
+use databases::*;
 use err::ServerError;
 
 #[derive(Clone)]
-pub struct AppState {
-    connection: Pool<SqliteConnectionManager>,
+pub struct AppState<T: Database> {
+    db: T,
 }
 
 #[tokio::main]
 async fn main() {
     // initialize tracing
     tracing_subscriber::fmt::init();
-    let state = AppState::init().await;
-    // build our application with a route
+    
+    let db_type = DatabaseType::from_env();
+    println!("Using database type: {:?}", db_type);
+    
+    // Build our application with a route - need to match on db type
+    match db_type {
+        DatabaseType::Sqlite => {
+            let state = AppState { db: SqliteDatabase::init().await.expect("Failed to initialize SQLite") };
+            run_server(state).await;
+        },
+        DatabaseType::Postgres => {
+            let state = AppState { db: PostgresDatabase::init().await.expect("Failed to initialize PostgreSQL") };
+            run_server(state).await;
+        },
+        DatabaseType::MySql => {
+            let state = AppState { db: MySqlDatabase::init().await.expect("Failed to initialize MySQL") };
+            run_server(state).await;
+        },
+        DatabaseType::Redis => {
+            let state = AppState { db: RedisDatabase::init().await.expect("Failed to initialize Redis") };
+            run_server(state).await;
+        },
+        DatabaseType::MongoDB => {
+            let state = AppState { db: MongoDatabase::init().await.expect("Failed to initialize MongoDB") };
+            run_server(state).await;
+        },
+    }
+}
+
+async fn run_server<T: Database + 'static>(state: AppState<T>) {
     let app = Router::new()
         // `GET /` goes to `root`
-        .route("/", get(root))
+        .route("/", get(root::<T>))
         // `GET /users/{username}` goes to `get_user_by_username`
-        .route("/users/{username}", get(get_user_by_username))
+        .route("/users/{username}", get(get_user_by_username::<T>))
         // `POST /users` goes to `create_user`
-        .route("/users", post(create_user))
-        // `PUT /users/{username}` goes to `update_user_by_username`
-        .route("/users/{username}", patch(update_user_by_username))
+        .route("/users", post(create_user::<T>))
+        // `PATCH /users/{username}` goes to `update_user_by_username`
+        .route("/users/{username}", patch(update_user_by_username::<T>))
         // `DELETE /users/{username}` goes to `delete_user_by_username`
-        .route("/users/{username}", delete(delete_user_by_username))
+        .route("/users/{username}", delete(delete_user_by_username::<T>))
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
@@ -62,168 +93,72 @@ async fn main() {
 }
 
 // basic handler that responds with a static string
-async fn root(State(_): State<AppState>) -> &'static str {
+async fn root<T: Database>(State(_): State<AppState<T>>) -> &'static str {
     "Hello, World!"
 }
-impl AppState {
-    pub async fn init() -> Self {
-        // Initialize the SQLite database connection
-        #[cfg(not(test))]
-        let manager = SqliteConnectionManager::file("my_database.db");
-        // Use a different database for testing
-        #[cfg(test)]
-        let manager = SqliteConnectionManager::memory();
-
-        let pool = r2d2::Pool::builder()
-            // .max_size(1)
-            .build(manager.with_init(|c| {
-                c.pragma_update(None, "foreign_keys", "ON")?;
-                c.pragma_update(None, "journal_mode", "WAL2")?;
-                c.pragma_update(None, "synchronous", "NORMAL")?;
-                Ok(())
-            }))
-            .unwrap();
-        let conn = pool.get().unwrap();
-        // Create the users table if it doesn't exist
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                age INTEGER DEFAULT 0
-            );",
-            params![],
-        )
-        .unwrap();
-        // Create index on username for faster lookups
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_username ON users (username);",
-            params![],
-        )
-        .unwrap();
-        AppState { connection: pool }
-    }
-}
-
-async fn create_user(
-    State(state): State<AppState>,
+async fn create_user<T: Database>(
+    State(state): State<AppState<T>>,
     Json(payload): Json<CreateUser>,
 ) -> Result<String, ServerError> {
-    // create a new user in the database
-    let conn = state.connection.get()?;
-    let result = conn.execute(
-        "INSERT INTO users (username) VALUES (?);",
-        params![payload.username],
-    );
-    let changed_row =
-        result.map_err(|e| format!("Create user `{}` error: {}", payload.username, e))?;
-    if changed_row == 0 {
-        // if there was an error, return a 500 Internal Server Error
-        return Err(format!("Error creating user: No rows changed").into());
-    }
-    // return a 201 Created status with the user data
-    return Ok(format!("User created with username: {}", payload.username));
+    state.db.create_user(payload).await.map_err(|e| ServerError::new(&e.to_string()))
 }
 
-pub async fn get_user_by_username(
-    State(state): State<AppState>,
+pub async fn get_user_by_username<T: Database>(
+    State(state): State<AppState<T>>,
     Path(username): Path<String>,
 ) -> Result<Json<User>, ServerError> {
-    // fetch a user by username from the database
-    let conn = state.connection.get()?;
-    let result = conn.query_one(
-        "SELECT id, username, age FROM users WHERE username = ?;",
-        params![username],
-        |row| {
-            Ok(User {
-                id: row.get(0)?,
-                username: row.get(1)?,
-                age: row.get(2)?,
-            })
-        },
-    );
-    match result {
-        Ok(user) => Ok(Json(user)),
-        Err(e) => Err(format!("Get user by username error: {}", e).into()),
-    }
+    let user = state.db.get_user(username).await.map_err(|e| ServerError::new(&e.to_string()))?;
+    Ok(Json(user))
 }
 
-async fn update_user_by_username(
-    State(state): State<AppState>,
+async fn update_user_by_username<T: Database>(
+    State(state): State<AppState<T>>,
     Path(username): Path<String>,
     Json(payload): Json<UpdateUser>,
 ) -> Result<StatusCode, ServerError> {
-    // update a user by username in the database
-    let conn = state.connection.get()?;
-    let statement = conn.execute(
-        "UPDATE users SET age = ? WHERE username = ?;",
-        params![payload.age, username],
-    );
-    // statement.bind((1, payload.age as i64)).unwrap();
-    // statement.bind((2, username.as_str())).unwrap();
-    match statement {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => Err(format!("Update user by username error: {}", e).into()),
-    }
+    state.db.update_user(username, payload).await.map_err(|e| ServerError::new(&e.to_string()))?;
+    Ok(StatusCode::OK)
 }
 
-pub async fn delete_user_by_username(
-    State(state): State<AppState>,
+pub async fn delete_user_by_username<T: Database>(
+    State(state): State<AppState<T>>,
     Path(username): Path<String>,
 ) -> Result<StatusCode, ServerError> {
-    // delete a user by username from the database
-    let conn = state.connection.get()?;
-    let statement = conn.execute("DELETE FROM users WHERE username = ?;", params![username]);
-
-    match statement {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => Err(format!("Delete user by username error: {}", e).into()),
-    }
+    state.db.delete_user(username).await.map_err(|e| ServerError::new(&e.to_string()))?;
+    Ok(StatusCode::OK)
 }
 
-// the input to our `create_user` handler
-#[derive(Deserialize, Clone)]
-struct CreateUser {
-    username: String,
-}
-
-#[derive(Deserialize, Clone)]
-struct UpdateUser {
-    age: u32,
-}
-
-// the output to our `create_user` handler
-#[derive(Serialize, Debug)]
-pub struct User {
-    pub id: u64,
-    pub username: String,
-    pub age: u32,
-}
-
+#[cfg(test)]
 mod tests {
-    #[cfg(test)]
     use super::*;
+
+    async fn create_test_state() -> AppState<SqliteDatabase> {
+        AppState { db: SqliteDatabase::init().await.unwrap() }
+    }
 
     #[tokio::test]
     async fn test_root() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let response = root(State(state)).await;
         assert_eq!(response, "Hello, World!");
     }
+    
     #[tokio::test]
     async fn test_create_user() {
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let status = create_user(State(state), Json(payload)).await;
         assert_eq!(
             status,
             Ok("User created with username: testuser".to_string())
         );
     }
+    
     #[tokio::test]
     async fn test_get_user_by_username() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
@@ -239,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_user_by_username() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
@@ -264,9 +199,10 @@ mod tests {
         assert_eq!(user.username, "testuser");
         assert_eq!(user.age, 30);
     }
+    
     #[tokio::test]
     async fn test_delete_user_by_username() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
@@ -287,7 +223,7 @@ mod tests {
     // FAILURE SCENARIO TESTS
     #[tokio::test]
     async fn test_get_nonexistent_user() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         
         let response = get_user_by_username(State(state), Path("nonexistent".to_string())).await;
         assert!(response.is_err());
@@ -298,7 +234,7 @@ mod tests {
 
     #[tokio::test] 
     async fn test_update_nonexistent_user() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let update_payload = UpdateUser { age: 25 };
         
         let response = update_user_by_username(
@@ -315,7 +251,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_nonexistent_user() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         
         let response = delete_user_by_username(State(state), Path("nonexistent".to_string())).await;
         
@@ -327,7 +263,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_duplicate_user() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let payload = CreateUser {
             username: "duplicate_user".to_string(),
         };
@@ -346,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_empty_username() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let payload = CreateUser {
             username: "".to_string(),
         };
@@ -359,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_user_with_large_age() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
@@ -387,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_with_very_long_username() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         // Create a very long username (1000 characters)
         let long_username = "a".repeat(1000);
         let payload = CreateUser {
@@ -404,7 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_with_special_characters() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let special_username = "user@#$%^&*()_+-=[]{}|;:,.<>?".to_string();
         let payload = CreateUser {
             username: special_username.clone(),
@@ -420,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_user_zero_age() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let payload = CreateUser {
             username: "testuser".to_string(),
         };
@@ -448,7 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_operations_on_same_user() {
-        let state = AppState::init().await;
+        let state = create_test_state().await;
         let username = "multiop_user".to_string();
         
         // Create user
