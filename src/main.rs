@@ -219,4 +219,209 @@ mod tests {
         let user_response = get_user_by_username(State(state), Path("testuser".to_string())).await;
         assert!(user_response.is_err());
     }
+
+    // FAILURE SCENARIO TESTS
+    #[tokio::test]
+    async fn test_get_nonexistent_user() {
+        let state = create_test_state().await;
+        
+        let response = get_user_by_username(State(state), Path("nonexistent".to_string())).await;
+        assert!(response.is_err());
+        
+        let error = response.unwrap_err();
+        assert!(error.message.contains("Get user by username error"));
+    }
+
+    #[tokio::test] 
+    async fn test_update_nonexistent_user() {
+        let state = create_test_state().await;
+        let update_payload = UpdateUser { age: 25 };
+        
+        let response = update_user_by_username(
+            State(state),
+            Path("nonexistent".to_string()),
+            Json(update_payload),
+        ).await;
+        
+        // Update operation should succeed even if no rows are affected
+        // This is the current behavior - update returns OK even for non-existent users
+        assert!(response.is_ok());
+        assert_eq!(response.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_user() {
+        let state = create_test_state().await;
+        
+        let response = delete_user_by_username(State(state), Path("nonexistent".to_string())).await;
+        
+        // Delete operation should succeed even if no rows are affected
+        // This is the current behavior - delete returns OK even for non-existent users  
+        assert!(response.is_ok());
+        assert_eq!(response.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_create_duplicate_user() {
+        let state = create_test_state().await;
+        let payload = CreateUser {
+            username: "duplicate_user".to_string(),
+        };
+        
+        // Create the user first time - should succeed
+        let first_response = create_user(State(state.clone()), Json(payload.clone())).await;
+        assert!(first_response.is_ok());
+        
+        // Try to create the same user again - should fail due to UNIQUE constraint
+        let second_response = create_user(State(state), Json(payload)).await;
+        assert!(second_response.is_err());
+        
+        let error = second_response.unwrap_err();
+        assert!(error.message.contains("Create user") && error.message.contains("error"));
+    }
+
+    #[tokio::test]
+    async fn test_create_user_empty_username() {
+        let state = create_test_state().await;
+        let payload = CreateUser {
+            username: "".to_string(),
+        };
+        
+        let response = create_user(State(state), Json(payload)).await;
+        // Empty username should be allowed by current implementation
+        // The database will accept empty strings as valid usernames
+        assert!(response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_user_with_large_age() {
+        let state = create_test_state().await;
+        let payload = CreateUser {
+            username: "testuser".to_string(),
+        };
+        create_user(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
+
+        // Test with maximum u32 value
+        let update_payload = UpdateUser { age: u32::MAX };
+        let response = update_user_by_username(
+            State(state.clone()),
+            Path("testuser".to_string()),
+            Json(update_payload),
+        ).await;
+        
+        assert!(response.is_ok());
+        assert_eq!(response.unwrap(), StatusCode::OK);
+        
+        // Verify the update worked
+        let user_response = get_user_by_username(State(state), Path("testuser".to_string())).await;
+        assert!(user_response.is_ok());
+        let user = user_response.unwrap().0;
+        assert_eq!(user.age, u32::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_create_user_with_very_long_username() {
+        let state = create_test_state().await;
+        // Create a very long username (1000 characters)
+        let long_username = "a".repeat(1000);
+        let payload = CreateUser {
+            username: long_username.clone(),
+        };
+        
+        let response = create_user(State(state.clone()), Json(payload)).await;
+        assert!(response.is_ok());
+        
+        // Verify we can retrieve the user with long username
+        let user_response = get_user_by_username(State(state), Path(long_username)).await;
+        assert!(user_response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_with_special_characters() {
+        let state = create_test_state().await;
+        let special_username = "user@#$%^&*()_+-=[]{}|;:,.<>?".to_string();
+        let payload = CreateUser {
+            username: special_username.clone(),
+        };
+        
+        let response = create_user(State(state.clone()), Json(payload)).await;
+        assert!(response.is_ok());
+        
+        // Verify we can retrieve the user with special characters
+        let user_response = get_user_by_username(State(state), Path(special_username)).await;
+        assert!(user_response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_user_zero_age() {
+        let state = create_test_state().await;
+        let payload = CreateUser {
+            username: "testuser".to_string(),
+        };
+        create_user(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
+
+        // Test with zero age
+        let update_payload = UpdateUser { age: 0 };
+        let response = update_user_by_username(
+            State(state.clone()),
+            Path("testuser".to_string()),
+            Json(update_payload),
+        ).await;
+        
+        assert!(response.is_ok());
+        assert_eq!(response.unwrap(), StatusCode::OK);
+        
+        // Verify the update worked
+        let user_response = get_user_by_username(State(state), Path("testuser".to_string())).await;
+        assert!(user_response.is_ok());
+        let user = user_response.unwrap().0;
+        assert_eq!(user.age, 0);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_operations_on_same_user() {
+        let state = create_test_state().await;
+        let username = "multiop_user".to_string();
+        
+        // Create user
+        let create_payload = CreateUser {
+            username: username.clone(),
+        };
+        let create_response = create_user(State(state.clone()), Json(create_payload)).await;
+        assert!(create_response.is_ok());
+        
+        // Get user
+        let get_response = get_user_by_username(State(state.clone()), Path(username.clone())).await;
+        assert!(get_response.is_ok());
+        let user = get_response.unwrap().0;
+        assert_eq!(user.username, username);
+        assert_eq!(user.age, 0); // Default age
+        
+        // Update user
+        let update_payload = UpdateUser { age: 42 };
+        let update_response = update_user_by_username(
+            State(state.clone()),
+            Path(username.clone()),
+            Json(update_payload),
+        ).await;
+        assert!(update_response.is_ok());
+        
+        // Get user again to verify update
+        let get_response2 = get_user_by_username(State(state.clone()), Path(username.clone())).await;
+        assert!(get_response2.is_ok());
+        let user2 = get_response2.unwrap().0;
+        assert_eq!(user2.age, 42);
+        
+        // Delete user
+        let delete_response = delete_user_by_username(State(state.clone()), Path(username.clone())).await;
+        assert!(delete_response.is_ok());
+        
+        // Try to get user after deletion - should fail
+        let get_response3 = get_user_by_username(State(state), Path(username)).await;
+        assert!(get_response3.is_err());
+    }
 }
